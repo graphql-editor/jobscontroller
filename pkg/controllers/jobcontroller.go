@@ -374,7 +374,7 @@ func (j *JobController) fetchLogs(functionJob *jobscontrollerv1alpha1.FunctionJo
 
 	}
 	w := tailWriter{
-		tailLogs: make([]byte, 1<<10),
+		tailLogs: make([]byte, 0, 1<<10),
 	}
 	if functionJob.Spec.ConcatLogs {
 		containers := append(pod.Spec.InitContainers, pod.Spec.Containers...)
