@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -359,6 +360,19 @@ func (j *JobController) pods(job *batchv1.Job) ([]*corev1.Pod, error) {
 	return pods, err
 }
 
+func containerStatus(statuses []corev1.ContainerStatus, name string) *corev1.ContainerStatus {
+	for _, c := range statuses {
+		if c.Name == name {
+			return &c
+		}
+	}
+	return nil
+}
+
+func wasContainerRan(status *corev1.ContainerStatus) bool {
+	return status != nil && (status.State.Running != nil || status.State.Terminated != nil)
+}
+
 func (j *JobController) fetchLogs(functionJob *jobscontrollerv1alpha1.FunctionJob, job *batchv1.Job) (logs string, err error) {
 	pods, err := j.pods(job)
 	if err != nil {
@@ -371,15 +385,21 @@ func (j *JobController) fetchLogs(functionJob *jobscontrollerv1alpha1.FunctionJo
 		} else if podStatusNewer(pod, p) {
 			pod = p
 		}
-
 	}
 	w := tailWriter{
 		tailLogs: make([]byte, 0, 1<<10),
 	}
 	if functionJob.Spec.ConcatLogs {
 		containers := append(pod.Spec.InitContainers, pod.Spec.Containers...)
+		containerStatuses := append(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses...)
 		for i := 0; i < len(containers) && err == nil; i++ {
-			err = j.podLogs(pod, containers[i].Name, &w)
+			name := containers[i].Name
+			status := containerStatus(containerStatuses, name)
+			if wasContainerRan(status) {
+				err = j.podLogs(pod, name, &w)
+			} else if status != nil && status.State.Waiting != nil {
+				err = w.writeFrom(strings.NewReader(fmt.Sprintf("container %s was never ran, reason: %s\n", name, status.State.Waiting.Message)))
+			}
 		}
 	} else {
 		err = j.podLogs(pod, functionJob.Spec.LogContainerName, &w)
